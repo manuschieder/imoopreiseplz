@@ -13,13 +13,13 @@ url = "https://www.interhyp.de/immobilienpreise/#immobilienpreisentwicklung"
 
 # Selenium WebDriver einrichten
 driver = webdriver.Chrome()
-wait = WebDriverWait(driver, 15)
+wait = WebDriverWait(driver, 30)  # Erhöhte Wartezeit für langsame Ladezeiten
 
 # Excel-Datei einrichten
 workbook = openpyxl.Workbook()
 sheet = workbook.active
 sheet.title = "Immobilienpreise"
-sheet.append(["PLZ", "Marktwert Haus 2015", "Marktwert Haus Aktuell", "Marktwert Wohnung 2015", "Marktwert Wohnung Aktuell"])
+sheet.append(["PLZ", "Zeitraum", "Marktwert Haus", "Marktwert Wohnung", "Marktwert Haus Aktuell", "Marktwert Wohnung Aktuell"])
 
 cookie_banner_closed = False
 
@@ -34,12 +34,29 @@ def read_plz_from_excel(file_path):
     plz_list = [str(row[0].value).zfill(5) for row in sheet.iter_rows(min_row=2, max_col=1)]
     return plz_list
 
+def select_dropdown_option(option_text):
+    for attempt in range(3):  # Mehrere Versuche, falls ein Fehler auftritt
+        try:
+            dropdown = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[aria-haspopup='listbox']")))
+            driver.execute_script("arguments[0].scrollIntoView(true);", dropdown)  # Scrollen, um das Dropdown sichtbar zu machen
+            dropdown.click()
+            time.sleep(2)  # Zeit für das Dropdown-Menü zum Öffnen
+            option = wait.until(EC.presence_of_element_located((By.XPATH, f"//span[text()='{option_text}']")))
+            driver.execute_script("arguments[0].click();", option)  # Sichere Auswahl durch JavaScript
+            log_with_timestamp(f"Dropdown-Option '{option_text}' ausgewählt.")
+            return
+        except Exception as e:
+            log_with_timestamp(f"Fehler beim Auswählen der Dropdown-Option '{option_text}': {e}")
+            time.sleep(5)  # Wartezeit vor erneutem Versuch
+
+    log_with_timestamp(f"Dropdown-Option '{option_text}' konnte nach mehreren Versuchen nicht ausgewählt werden.")
+
 def scrape_data_selenium(plz):
     """Daten für eine einzelne PLZ mit Selenium abfragen."""
     global cookie_banner_closed
 
     driver.get(url)
-    time.sleep(5)  # Warten, bis die Seite vollständig geladen ist
+    time.sleep(10)  # Warten, bis die Seite vollständig geladen ist
 
     if not cookie_banner_closed:
         try:
@@ -60,30 +77,49 @@ def scrape_data_selenium(plz):
         input_field.send_keys(Keys.RETURN)
 
         # Wartezeit für die Aktualisierung der Daten
-        time.sleep(8)
+        time.sleep(12)
 
-        # Extrahiere die Werte für Marktwert Haus
+        # Extrahiere die aktuellen Werte
         try:
             haus_div = wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, "content_LXx3p4L4YM")))[0]
             haus_soup = BeautifulSoup(haus_div.get_attribute('innerHTML'), 'html.parser')
-            marktwert_2015 = haus_soup.select_one("p:contains('2015:') strong").get_text(strip=True)
-            marktwert_aktuell = haus_soup.select_one("p:contains('Aktuell:') strong").get_text(strip=True)
+            marktwert_haus_aktuell = haus_soup.select_one("p:-soup-contains('Aktuell:') strong").get_text(strip=True)
         except Exception as e:
-            marktwert_2015 = marktwert_aktuell = "N/A"
-            log_with_timestamp(f"Fehler beim Auslesen der Marktwerte Haus für PLZ {plz}: {e}")
+            marktwert_haus_aktuell = "N/A"
+            log_with_timestamp(f"Fehler beim Auslesen des aktuellen Marktwerts Haus für PLZ {plz}: {e}")
 
-        # Extrahiere die Werte für Marktwert Wohnung
         try:
-            wohnung_div = wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, "content_LXx3p4L4YM")))[1]  # Zweites Div für Wohnung
+            wohnung_div = wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, "content_LXx3p4L4YM")))[1]
             wohnung_soup = BeautifulSoup(wohnung_div.get_attribute('innerHTML'), 'html.parser')
-            marktwert_wohnung_2015 = wohnung_soup.select_one("p:contains('2015:') strong").get_text(strip=True)
-            marktwert_wohnung_aktuell = wohnung_soup.select_one("p:contains('Aktuell:') strong").get_text(strip=True)
+            marktwert_wohnung_aktuell = wohnung_soup.select_one("p:-soup-contains('Aktuell:') strong").get_text(strip=True)
         except Exception as e:
-            marktwert_wohnung_2015 = marktwert_wohnung_aktuell = "N/A"
-            log_with_timestamp(f"Fehler beim Auslesen der Marktwerte Wohnung für PLZ {plz}: {e}")
+            marktwert_wohnung_aktuell = "N/A"
+            log_with_timestamp(f"Fehler beim Auslesen des aktuellen Marktwerts Wohnung für PLZ {plz}: {e}")
 
-        # Daten in Excel schreiben
-        sheet.append([plz, marktwert_2015, marktwert_aktuell, marktwert_wohnung_2015, marktwert_wohnung_aktuell])
+        # Werte für verschiedene Zeiträume aus Dropdown
+        zeitraeume = ["1 Jahr", "2 Jahre", "5 Jahre", "10 Jahre"]
+        for zeitraum in zeitraeume:
+            select_dropdown_option(zeitraum)
+            time.sleep(12)  # Erhöhte Zeit für die Aktualisierung der Werte
+
+            try:
+                haus_div = wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, "content_LXx3p4L4YM")))[0]
+                haus_soup = BeautifulSoup(haus_div.get_attribute('innerHTML'), 'html.parser')
+                marktwert_haus = haus_soup.select_one("p strong").get_text(strip=True)  # Dynamisch das erste <strong> Tag holen
+            except Exception as e:
+                marktwert_haus = "N/A"
+                log_with_timestamp(f"Fehler beim Auslesen der Marktwerte Haus für PLZ {plz} und Zeitraum {zeitraum}: {e}")
+
+            try:
+                wohnung_div = wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, "content_LXx3p4L4YM")))[1]
+                wohnung_soup = BeautifulSoup(wohnung_div.get_attribute('innerHTML'), 'html.parser')
+                marktwert_wohnung = wohnung_soup.select_one("p strong").get_text(strip=True)  # Dynamisch das erste <strong> Tag holen
+            except Exception as e:
+                marktwert_wohnung = "N/A"
+                log_with_timestamp(f"Fehler beim Auslesen der Marktwerte Wohnung für PLZ {plz} und Zeitraum {zeitraum}: {e}")
+
+            # Daten in Excel schreiben
+            sheet.append([plz, zeitraum, marktwert_haus, marktwert_wohnung, marktwert_haus_aktuell, marktwert_wohnung_aktuell])
 
     except Exception as e:
         log_with_timestamp(f"Fehler bei PLZ {plz}: {e}")
@@ -92,7 +128,7 @@ def scrape_data_selenium(plz):
 input_excel_file = "PLZ_Liste.xlsx"
 
 # PLZ-Liste aus Excel einlesen
-deutsche_plz = read_plz_from_excel(input_excel_file)
+deutsche_plz = read_plz_from_excel(input_excel_file) 
 
 # Alle PLZ durchlaufen
 for plz in deutsche_plz:
