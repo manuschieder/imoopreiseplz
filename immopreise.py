@@ -27,13 +27,6 @@ cookie_banner_closed = False
 def log_with_timestamp(message):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
 
-# PLZ aus Excel-Datei einlesen
-def read_plz_from_excel(file_path):
-    workbook = openpyxl.load_workbook(file_path)
-    sheet = workbook.active
-    plz_list = [str(row[0].value).zfill(5) for row in sheet.iter_rows(min_row=2, max_col=1)]
-    return plz_list
-
 def select_dropdown_option(option_text):
     for attempt in range(3):  # Mehrere Versuche, falls ein Fehler auftritt
         try:
@@ -41,8 +34,8 @@ def select_dropdown_option(option_text):
             driver.execute_script("arguments[0].scrollIntoView(true);", dropdown)  # Scrollen, um das Dropdown sichtbar zu machen
             dropdown.click()
             time.sleep(2)  # Zeit für das Dropdown-Menü zum Öffnen
-            option = wait.until(EC.presence_of_element_located((By.XPATH, f"//span[text()='{option_text}']")))
-            driver.execute_script("arguments[0].click();", option)  # Sichere Auswahl durch JavaScript
+            option = wait.until(EC.element_to_be_clickable((By.XPATH, f"//span[text()='{option_text}']")))
+            option.click()
             log_with_timestamp(f"Dropdown-Option '{option_text}' ausgewählt.")
             return
         except Exception as e:
@@ -78,6 +71,17 @@ def scrape_data_selenium(plz):
 
         # Wartezeit für die Aktualisierung der Daten
         time.sleep(12)
+
+        # Prüfen, ob genügend Daten vorliegen
+        try:
+            error_message = driver.find_element(By.XPATH, "//h5[contains(text(), 'Ergebnisanzeige nicht möglich')]")
+            if error_message:
+                log_with_timestamp(f"Keine Daten für PLZ {plz}. Überspringen...")
+                sheet.append([plz, "N/A", "N/A", "N/A", "N/A", "N/A"])
+                workbook.save("Immobilienpreise2.xlsx")
+                return
+        except:
+            pass
 
         # Extrahiere die aktuellen Werte
         try:
@@ -118,17 +122,30 @@ def scrape_data_selenium(plz):
                 marktwert_wohnung = "N/A"
                 log_with_timestamp(f"Fehler beim Auslesen der Marktwerte Wohnung für PLZ {plz} und Zeitraum {zeitraum}: {e}")
 
-            # Daten in Excel schreiben
+            # Daten in Excel schreiben und speichern
             sheet.append([plz, zeitraum, marktwert_haus, marktwert_wohnung, marktwert_haus_aktuell, marktwert_wohnung_aktuell])
+            workbook.save("Immobilienpreise2.xlsx")
 
     except Exception as e:
+        sheet.append([plz, "N/A", "N/A", "N/A", "N/A", "N/A"])
+        workbook.save("Immobilienpreise2.xlsx")
         log_with_timestamp(f"Fehler bei PLZ {plz}: {e}")
+
+# PLZ aus Excel-Datei einlesen
+def read_plz_from_excel(file_path, start_plz):
+    workbook = openpyxl.load_workbook(file_path)
+    sheet = workbook.active
+    plz_list = [str(row[0].value).zfill(5) for row in sheet.iter_rows(min_row=2, max_col=1)]
+    if start_plz in plz_list:
+        start_index = plz_list.index(start_plz) + 1
+        return plz_list[start_index:]
+    return []
 
 # Pfad zur Excel-Datei mit PLZ
 input_excel_file = "PLZ_Liste.xlsx"
 
 # PLZ-Liste aus Excel einlesen
-deutsche_plz = read_plz_from_excel(input_excel_file) 
+deutsche_plz = read_plz_from_excel(input_excel_file)
 
 # Alle PLZ durchlaufen
 for plz in deutsche_plz:
@@ -141,7 +158,4 @@ for plz in deutsche_plz:
 # Selenium WebDriver schließen
 driver.quit()
 
-# Excel-Datei speichern
-excel_file = "Immobilienpreise.xlsx"
-workbook.save(excel_file)
-log_with_timestamp(f"Daten wurden erfolgreich in '{excel_file}' gespeichert.")
+log_with_timestamp(f"Daten wurden erfolgreich in 'Immobilienpreise2.xlsx' gespeichert.")
